@@ -2,61 +2,97 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v4"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-func InitializeDatabase() *pgx.Conn {
-	database, err := pgx.Connect(context.Background(), "postgres://speedmonitor:k9xmtR4pQy8MXdCkfFng7S4iiTBiPhTFWGRzHSDE3o8UhvtzKyrBNPru4Gj8o6iowSGmhDXG3Ns4WMA98KA8HyicbVZ8CButM3NHQ8HPDNvABGrGqBcHbsEugcg3RTdE@dialga:5432/postgres")
-	if err != nil {
-		panic(err)
+func generateGDPR() interface{} {
+	var gdpr = struct {
+		Settings struct {
+			LicenseAccepted string `json:"LicenseAccepted"`
+			GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
+		} `json:"Settings"`
+	}{
+		Settings: struct {
+			LicenseAccepted string `json:"LicenseAccepted"`
+			GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
+		}{
+			LicenseAccepted: "604ec27f828456331ebf441826292c49276bd3c1bee1a2f65a6452f505c4061c",
+			GDPRTimeStamp:   time.Now().Unix(),
+		},
 	}
-
-	_, err = database.Exec(context.Background(), `
-	CREATE TABLE IF NOT EXISTS speedmonitor(
-		time TIMESTAMPTZ NOT NULL,
-		ping REAL NOT NULL,
-		jitter REAL NOT NULL,
-		upload REAL NOT NULL,
-		upload_time_ms REAL NOT NULL,
-		upload_used_bytes REAL NOT NULL,
-		download REAL NOT NULL,
-		download_time_ms REAL NOT NULL,
-		download_used_bytes REAL NOT NULL,
-		isp TEXT NOT NULL,
-		ip_external TEXT NOT NULL,
-		traceroute TEXT NOT NULL,
-		packet_loss REAL NOT NULL,
-		url TEXT NOT NULL);`)
-	if err != nil {
-		panic(err)
-	}
-
-	return database
+	return gdpr
 }
 
-var database = InitializeDatabase()
+type PingEntry struct {
+	Time         time.Time `gorm:"not null"`
+	Rtt_min      float64   `gorm:"not null"`
+	Rtt_max      float64   `gorm:"not null"`
+	Rtt_avg      float64   `gorm:"not null"`
+	Rtt_mdev     float64   `gorm:"not null"`
+	Packet_loss  float64   `gorm:"not null"`
+	Endpoint_url string    `gorm:"not null"`
+}
 
-var gdpr = struct {
-	Settings struct {
-		LicenseAccepted string `json:"LicenseAccepted"`
-		GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
-	} `json:"Settings"`
-}{
-	Settings: struct {
-		LicenseAccepted string `json:"LicenseAccepted"`
-		GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
-	}{
-		LicenseAccepted: "604ec27f828456331ebf441826292c49276bd3c1bee1a2f65a6452f505c4061c",
-		GDPRTimeStamp:   time.Now().Unix(),
-	},
+func (PingEntry) TableName() string {
+	return "pingmonitor"
+}
+
+type SpeedtestEntry struct {
+	Time                time.Time `gorm:"not null"`
+	Ping                float64   `gorm:"not null"`
+	Jitter              float64   `gorm:"not null"`
+	Upload              float64   `gorm:"not null"`
+	Download            float64   `gorm:"not null"`
+	Packet_loss         float64   `gorm:"not null"`
+	Url                 string    `gorm:"not null"`
+	Upload_time_ms      float64   `gorm:"not null;default:0"`
+	Download_time_ms    float64   `gorm:"not null;default:0"`
+	Upload_used_bytes   float64   `gorm:"not null;default:0"`
+	Download_used_bytes float64   `gorm:"not null;default:0"`
+	Isp                 string    `gorm:"not null;default:'default'"`
+	Ip_external         string    `gorm:"not null;default:'127.0.0.1'"`
+	Traceroute          string    `gorm:"not null;default:'traceroute'"`
+}
+
+func (SpeedtestEntry) TableName() string {
+	return "speedmonitor"
+}
+
+type PingResult struct {
+	DestinationIP      string      `json:"destination_ip"`
+	DataBytes          int         `json:"data_bytes"`
+	Pattern            interface{} `json:"pattern"`
+	Destination        string      `json:"destination"`
+	PacketsTransmitted int         `json:"packets_transmitted"`
+	PacketsReceived    int         `json:"packets_received"`
+	PacketLossPercent  float64     `json:"packet_loss_percent"`
+	Duplicates         int         `json:"duplicates"`
+	TimeMs             float64     `json:"time_ms"`
+	RoundTripMsMin     float64     `json:"round_trip_ms_min"`
+	RoundTripMsAvg     float64     `json:"round_trip_ms_avg"`
+	RoundTripMsMax     float64     `json:"round_trip_ms_max"`
+	RoundTripMsStddev  float64     `json:"round_trip_ms_stddev"`
+	Responses          []struct {
+		Type       string    `json:"type"`
+		Timestamp  time.Time `json:"timestamp"`
+		Bytes      int       `json:"bytes"`
+		ResponseIP string    `json:"response_ip"`
+		IcmpSeq    int       `json:"icmp_seq"`
+		TTL        int       `json:"ttl"`
+		TimeMs     float64   `json:"time_ms"`
+		Duplicate  bool      `json:"duplicate"`
+	} `json:"responses"`
 }
 
 type SpeedtestResult struct {
@@ -65,7 +101,7 @@ type SpeedtestResult struct {
 	Latency    Latency   `json:"ping"`
 	Download   UpDownload
 	Upload     UpDownload
-	PacketLoss float32
+	PacketLoss float64
 	ISP        string
 	Interface  Interface
 	Server     Server
@@ -73,9 +109,9 @@ type SpeedtestResult struct {
 }
 
 type UpDownload struct {
-	Bandwidth int32
-	Bytes     int32
-	Elapsed   int32
+	Bandwidth int64
+	Bytes     int64
+	Elapsed   int64
 }
 
 type Interface struct {
@@ -87,9 +123,9 @@ type Interface struct {
 }
 
 type Server struct {
-	Id       int32
+	Id       int64
 	Host     string
-	Port     int32
+	Port     int64
 	Name     string
 	Location string
 	Country  string
@@ -103,31 +139,202 @@ type Result struct {
 }
 
 type Latency struct {
-	Jitter float32
-	Ping   float32 `json:"latency"`
+	Jitter float64
+	Ping   float64 `json:"latency"`
 }
 
+var wg sync.WaitGroup
+
 func main() {
-	defer database.Close(context.Background())
 
-	sleepTime := 300
+	db_user := "postgres"
 
-	if len(os.Args[1:]) > 0 {
-		var err error = nil
-		sleepTime, err = strconv.Atoi(os.Args[1])
-		if err != nil {
-			log.Fatal(err)
+	if value, exists := os.LookupEnv("INFRAMONITOR_DB_USER"); exists {
+		db_user = value
+	} else {
+		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_DB_USER", db_user)
+	}
+
+	db_password := "inframonitor_dev_password"
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_DB_PASSWORD"); exists {
+		db_password = value
+	} else {
+		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_DB_PASSWORD", db_password)
+	}
+
+	db_host := "localhost"
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_DB_HOST"); exists {
+		db_host = value
+	} else {
+		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_DB_HOST", db_host)
+	}
+
+	db_port := "5432"
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_DB_PORT"); exists {
+		db_port = value
+	} else {
+		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_DB_PORT", db_port)
+	}
+
+	db, err := gorm.Open(postgres.Open(fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%s", db_host, db_user, db_password, db_port)), &gorm.Config{})
+
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err.Error())
+	}
+
+	db.AutoMigrate(&PingEntry{}, SpeedtestEntry{})
+
+	var tables []struct {
+		Table_name string
+	}
+
+	db.Raw("SELECT table_name FROM _timescaledb_catalog.hypertable").Scan(&tables)
+
+	hypertable_pingmonitor_exists := false
+	hypertable_speedmonitor_exists := false
+
+	for _, table := range tables {
+		if strings.Compare(table.Table_name, SpeedtestEntry.TableName(SpeedtestEntry{})) == 0 {
+			hypertable_speedmonitor_exists = true
+		}
+		if strings.Compare(table.Table_name, PingEntry.TableName(PingEntry{})) == 0 {
+			hypertable_pingmonitor_exists = true
 		}
 	}
-	for {
 
-		go testRoutine()
-		log.Printf("Started speedtest, going to sleep for %d seconds", sleepTime)
+	if !hypertable_pingmonitor_exists {
+		log.Printf("Hypertable %s does not yet exist, creating...", PingEntry.TableName(PingEntry{}))
+		db.Exec("SELECT create_hypertable(?, 'time')", PingEntry.TableName(PingEntry{}))
+	} else {
+		log.Printf("Hypertable %s already exists, skipping creation", PingEntry.TableName(PingEntry{}))
+	}
+	if !hypertable_speedmonitor_exists {
+		log.Printf("Hypertable %s does not yet exist, creating...", SpeedtestEntry.TableName(SpeedtestEntry{}))
+		db.Exec("SELECT create_hypertable(?, 'time')", SpeedtestEntry.TableName(SpeedtestEntry{}))
+	} else {
+		log.Printf("Hypertable %s already exists, skipping creation", SpeedtestEntry.TableName(SpeedtestEntry{}))
+	}
+
+	sleepTimePing := 1
+	sleepTimeSpeedtest := 300
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_SLEEP_TIME_SPEEDTEST"); exists {
+		sleepTimeSpeedtest, err = strconv.Atoi(value)
+		if err != nil {
+			log.Fatalf("Error while parsing argument %s", err.Error())
+		}
+	} else {
+		log.Printf("Environment variable %s not set, using default value %d", "INFRAMONITOR_SLEEP_TIME_SPEEDTEST", sleepTimePing)
+	}
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_SLEEP_TIME_PING"); exists {
+		sleepTimePing, err = strconv.Atoi(value)
+		if err != nil {
+			log.Fatalf("Error while parsing argument %s", err.Error())
+		}
+	} else {
+		log.Printf("Environment variable %s not set, using default value %d", "INFRAMONITOR_SLEEP_TIME_PING", sleepTimeSpeedtest)
+	}
+
+	error_channel := make(chan error)
+
+	wg.Add(2)
+
+	go speedtestRoutine(db, error_channel, sleepTimeSpeedtest)
+	go pingRoutine(db, error_channel, sleepTimePing)
+
+	wg.Wait()
+}
+
+func pingRoutine(db *gorm.DB, error_channel chan error, sleepTime int) {
+	log.Println("Starting ping subroutines")
+
+	destinations := []string{"google.com", "1.1.1.1"}
+
+	count := 1
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_DESTINATIONS_PING"); exists {
+		destinations = strings.Split(value, ",")
+	} else {
+		log.Printf("Environment variable %s not set, using default value %v", "INFRAMONITOR_DESTINATIONS_PING", destinations)
+	}
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_COUNT_PING"); exists {
+		c, err := strconv.Atoi(value)
+		if err != nil {
+			log.Fatalf("Error while parsing argument %s", err.Error())
+		}
+		count = c
+	} else {
+		log.Printf("Environment variable %s not set, using default value %d", "INFRAMONITOR_COUNT_PING", count)
+	}
+
+	for {
+		for _, d := range destinations {
+			log.Printf("Starting ping subroutine for target '%s'", d)
+			go ping(d, fmt.Sprint(count), db)
+		}
 		time.Sleep(time.Duration(sleepTime) * time.Second)
 	}
 }
 
-func testRoutine() {
+func ping(destination_url string, count string, db *gorm.DB) {
+	log.Printf("Starting ping command for target '%s'", destination_url)
+
+	cmd := exec.Command("jc", "ping", "-c", count, destination_url)
+
+	var out bytes.Buffer
+
+	cmd.Stdout = &out
+
+	err := cmd.Run()
+
+	if err != nil {
+		log.Printf("Error while pinging target '%s': %s", destination_url, err.Error())
+	}
+
+	log.Printf("Ping command for target '%s' finished", destination_url)
+
+	var result PingResult
+
+	err = json.Unmarshal(out.Bytes(), &result)
+
+	if err != nil {
+		log.Fatalf("Error while unmarshalling: %s", err.Error())
+	}
+
+	err = db.Create(&PingEntry{
+		Time:         time.Now(),
+		Rtt_min:      result.RoundTripMsMin,
+		Rtt_max:      result.RoundTripMsMax,
+		Rtt_avg:      result.RoundTripMsAvg,
+		Rtt_mdev:     result.RoundTripMsStddev,
+		Packet_loss:  result.PacketLossPercent,
+		Endpoint_url: destination_url,
+	}).Error
+
+	if err != nil {
+		log.Fatalf("Error while inserting into DB: %s", err.Error())
+	}
+
+	log.Printf("Ping for target '%s' complete, result saved", destination_url)
+}
+
+func speedtestRoutine(db *gorm.DB, error_channel chan error, sleepTime int) {
+	for {
+		log.Println("Starting speedtest subroutine")
+		go speedtest(db)
+		log.Printf("Sleeping after speedtest routine for %d seconds", sleepTime)
+		time.Sleep(time.Duration(sleepTime) * time.Second)
+	}
+}
+
+func speedtest(db *gorm.DB) {
+	log.Println("Starting speedtest command")
+
 	cmd := exec.Command("speedtest", "-f", "json", "-s", "3692")
 
 	var out bytes.Buffer
@@ -137,16 +344,20 @@ func testRoutine() {
 	err := cmd.Run()
 
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error while running the speedtest command: %s", err.Error())
 	}
+
+	log.Println("Speedtest command finished")
 
 	var result SpeedtestResult
 
 	err = json.Unmarshal(out.Bytes(), &result)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error while unmarshalling: %s", err.Error())
 	}
+
+	log.Println("Starting traceroute command")
 
 	cmd = exec.Command("traceroute", "google.com")
 
@@ -157,42 +368,33 @@ func testRoutine() {
 	err = cmd.Run()
 
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error while running the traceroute command: %s", err.Error())
 	}
+
+	log.Println("Traceroute command finished")
 
 	traceRoute := outTraceRoute.String()
 
-	_, err = database.Exec(context.Background(), `INSERT INTO speedmonitor(
-		time,
-		ping,
-		jitter,
-		upload,
-		upload_time_ms,
-		upload_used_bytes,
-		download,
-		download_time_ms,
-		download_used_bytes,
-		isp,
-		ip_external,
-		traceroute,
-		packet_loss,
-		url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);`,
-		result.Time,
-		result.Latency.Ping,
-		result.Latency.Jitter,
-		result.Upload.Bandwidth*8/1_000_000,
-		result.Upload.Elapsed,
-		result.Upload.Bytes,
-		result.Download.Bandwidth*8/1_000_000,
-		result.Download.Elapsed,
-		result.Download.Bytes,
-		result.ISP,
-		result.Interface.ExternalIp,
-		traceRoute,
-		result.PacketLoss,
-		result.Result.Url,
-	)
+	err = db.Create(&SpeedtestEntry{
+		Time:                time.Time{},
+		Ping:                result.Latency.Ping,
+		Jitter:              result.Latency.Jitter,
+		Upload:              float64(result.Upload.Bandwidth) * 8 / 1_000_000,
+		Download:            float64(result.Download.Bandwidth) * 8 / 1_000_000,
+		Packet_loss:         result.PacketLoss,
+		Url:                 result.Result.Url,
+		Upload_time_ms:      float64(result.Upload.Elapsed),
+		Download_time_ms:    float64(result.Download.Elapsed),
+		Upload_used_bytes:   float64(result.Upload.Bytes),
+		Download_used_bytes: float64(result.Download.Bytes),
+		Isp:                 result.ISP,
+		Ip_external:         result.Interface.ExternalIp,
+		Traceroute:          traceRoute,
+	}).Error
+
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error while inserting into DB: %s", err.Error())
 	}
+
+	log.Println("Speedtest complete, result saved")
 }
