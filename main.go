@@ -261,7 +261,7 @@ func main() {
 
 	err = os.Remove(gdpr_file_location)
 
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
 	}
 
