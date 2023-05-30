@@ -1,7 +1,9 @@
-FROM golang:1.17.3
-RUN curl -s https://install.speedtest.net/app/cli/install.deb.sh | bash
+FROM golang:latest
+RUN curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash
 RUN apt-get install speedtest
 RUN apt-get install traceroute
+RUN apt-get install iputils-ping -y
+RUN apt-get install jc -y
 COPY speedtest-cli.json /root/.config/ookla/speedtest-cli.json
 RUN mkdir /app
 ADD . /app
