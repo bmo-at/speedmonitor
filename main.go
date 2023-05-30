@@ -354,7 +354,7 @@ func speedtestRoutine(db *gorm.DB, error_channel chan error, sleepTime int) {
 func speedtest(db *gorm.DB) {
 	log.Println("Starting speedtest command")
 
-	cmd := exec.Command("speedtest", "-f", "json", "-s", "3692")
+	cmd := exec.Command("speedtest", "-f", "json")
 
 	var out bytes.Buffer
 
