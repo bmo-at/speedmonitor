@@ -16,22 +16,24 @@ import (
 	"gorm.io/gorm"
 )
 
-func generateGDPR() interface{} {
-	var gdpr = struct {
-		Settings struct {
-			LicenseAccepted string `json:"LicenseAccepted"`
-			GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
-		} `json:"Settings"`
-	}{
-		Settings: struct {
-			LicenseAccepted string `json:"LicenseAccepted"`
-			GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
-		}{
+func generateGDPR() GDPR {
+	gdpr := GDPR{
+		Settings: GDPR_Settings{
 			LicenseAccepted: "604ec27f828456331ebf441826292c49276bd3c1bee1a2f65a6452f505c4061c",
 			GDPRTimeStamp:   time.Now().Unix(),
 		},
 	}
+
 	return gdpr
+}
+
+type GDPR struct {
+	Settings GDPR_Settings `json:"Settings"`
+}
+
+type GDPR_Settings struct {
+	LicenseAccepted string `json:"LicenseAccepted"`
+	GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
 }
 
 type PingEntry struct {
