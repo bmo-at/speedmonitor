@@ -265,10 +265,22 @@ func main() {
 		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
 	}
 
-	err = os.WriteFile(gdpr_file_location, bytes, os.ModeAppend)
+	file, err := os.Create(gdpr_file_location)
 
 	if err != nil {
-		log.Fatalf("Error creating gdpr compliance: %s", err.Error())
+		log.Fatalf("Error creating gdpr compliance file: %s", err.Error())
+	}
+
+	_, err = file.Write(bytes)
+
+	if err != nil {
+		log.Fatalf("Error writing gdpr compliance file: %s", err.Error())
+	}
+
+	err = file.Close()
+
+	if err != nil {
+		log.Fatalf("Error closing gdpr compliance file: %s", err.Error())
 	}
 
 	go speedtestRoutine(db, error_channel, sleepTimeSpeedtest)
