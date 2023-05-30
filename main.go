@@ -395,7 +395,7 @@ func speedtest(db *gorm.DB) {
 	traceRoute := outTraceRoute.String()
 
 	err = db.Create(&SpeedtestEntry{
-		Time:                time.Time{},
+		Time:                time.Now(),
 		Ping:                result.Latency.Ping,
 		Jitter:              result.Latency.Jitter,
 		Upload:              float64(result.Upload.Bandwidth) * 8 / 1_000_000,
