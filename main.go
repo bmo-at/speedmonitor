@@ -189,7 +189,7 @@ func main() {
 
 	db.AutoMigrate(&PingEntry{}, SpeedtestEntry{})
 
-	gdpr_file_location := "/app/speedtest-cli.json"
+	gdpr_file_location := "~/.config/speedtest-cli.json"
 
 	if value, exists := os.LookupEnv("INFRAMONITOR_GDPR_LOCATION"); exists {
 		gdpr_file_location = value
@@ -259,8 +259,17 @@ func main() {
 		log.Fatalf("Error unmarshalling gdpr compliance: %s", err.Error())
 	}
 
-	os.Remove(gdpr_file_location)
-	os.WriteFile("/app/speedtest-cli.json", bytes, os.ModeAppend)
+	err = os.Remove(gdpr_file_location)
+
+	if err != nil {
+		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
+	}
+
+	err = os.WriteFile(gdpr_file_location, bytes, os.ModeAppend)
+
+	if err != nil {
+		log.Fatalf("Error creating gdpr compliance: %s", err.Error())
+	}
 
 	go speedtestRoutine(db, error_channel, sleepTimeSpeedtest)
 	go pingRoutine(db, error_channel, sleepTimePing)
