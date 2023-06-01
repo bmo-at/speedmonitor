@@ -267,7 +267,7 @@ func main() {
 		log.Fatalf("Error unmarshalling gdpr compliance: %s", err.Error())
 	}
 
-	err = os.Remove(gdpr_file_location + gdpr_file_name)
+	err = os.Remove(strings.Join([]string{gdpr_file_location, gdpr_file_name}, "/"))
 
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
@@ -279,7 +279,7 @@ func main() {
 		log.Fatalf("Error creating gdpr compliance dir: %s", err.Error())
 	}
 
-	file, err := os.Create(gdpr_file_location + gdpr_file_name)
+	file, err := os.Create(strings.Join([]string{gdpr_file_location, gdpr_file_name}, "/"))
 
 	if err != nil {
 		log.Fatalf("Error creating gdpr compliance file: %s", err.Error())
