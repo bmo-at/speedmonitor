@@ -189,12 +189,20 @@ func main() {
 
 	db.AutoMigrate(&PingEntry{}, SpeedtestEntry{})
 
-	gdpr_file_location := "~/.config/speedtest-cli.json"
+	gdpr_file_location := "~/.config"
 
 	if value, exists := os.LookupEnv("INFRAMONITOR_GDPR_LOCATION"); exists {
 		gdpr_file_location = value
 	} else {
 		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_GDPR_LOCATION", gdpr_file_location)
+	}
+
+	gdpr_file_name := "speedtest-cli.json"
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_GDPR_FILENAME"); exists {
+		gdpr_file_name = value
+	} else {
+		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_GDPR_FILENAME", gdpr_file_name)
 	}
 
 	var tables []struct {
@@ -263,6 +271,12 @@ func main() {
 
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
+	}
+
+	os.MkdirAll(gdpr_file_location, os.ModeDir)
+
+	if err != nil {
+		log.Fatalf("Error creating gdpr compliance dir: %s", err.Error())
 	}
 
 	file, err := os.Create(gdpr_file_location)
