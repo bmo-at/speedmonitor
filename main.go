@@ -273,7 +273,7 @@ func main() {
 		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
 	}
 
-	os.MkdirAll(gdpr_file_location, os.ModeDir)
+	err = os.MkdirAll(gdpr_file_location, os.ModeDir)
 
 	if err != nil {
 		log.Fatalf("Error creating gdpr compliance dir: %s", err.Error())
