@@ -4,7 +4,7 @@ RUN apt-get install speedtest
 RUN apt-get install traceroute
 RUN apt-get install iputils-ping -y
 RUN apt-get install jc -y
-COPY speedtest-cli.json /root/.config/ookla/speedtest-cli.json
+# COPY speedtest-cli.json /root/.config/ookla/speedtest-cli.json
 RUN mkdir /app
 ADD . /app
 WORKDIR /app
