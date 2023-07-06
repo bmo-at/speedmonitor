@@ -1,4 +1,4 @@
-FROM golang:latest
+FROM golang:1.20.1
 RUN curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash
 RUN apt-get install speedtest
 RUN apt-get install traceroute
