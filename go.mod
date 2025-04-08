@@ -5,8 +5,16 @@ go 1.18
 require github.com/jackc/pgx/v4 v4.17.2
 
 require (
+	github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 // indirect
+	github.com/alecthomas/units v0.0.0-20210208195552-ff826a37aa15 // indirect
+	github.com/chelnak/ysmrr v0.2.1 // indirect
+	github.com/fatih/color v1.13.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.16 // indirect
+	github.com/showwin/speedtest-go v1.7.7 // indirect
+	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
 	gorm.io/driver/postgres v1.4.5 // indirect
 	gorm.io/gorm v1.24.1 // indirect
 )

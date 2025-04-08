@@ -12,29 +12,10 @@ import (
 	"sync"
 	"time"
 
+	speedtest_go "github.com/showwin/speedtest-go/speedtest"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
-
-func generateGDPR() GDPR {
-	gdpr := GDPR{
-		Settings: GDPR_Settings{
-			LicenseAccepted: "604ec27f828456331ebf441826292c49276bd3c1bee1a2f65a6452f505c4061c",
-			GDPRTimeStamp:   time.Now().Unix(),
-		},
-	}
-
-	return gdpr
-}
-
-type GDPR struct {
-	Settings GDPR_Settings `json:"Settings"`
-}
-
-type GDPR_Settings struct {
-	LicenseAccepted string `json:"LicenseAccepted"`
-	GDPRTimeStamp   int64  `json:"GDPRTimeStamp"`
-}
 
 type PingEntry struct {
 	Time         time.Time `gorm:"not null"`
@@ -189,22 +170,6 @@ func main() {
 
 	db.AutoMigrate(&PingEntry{}, SpeedtestEntry{})
 
-	gdpr_file_location := "~/.config"
-
-	if value, exists := os.LookupEnv("INFRAMONITOR_GDPR_LOCATION"); exists {
-		gdpr_file_location = value
-	} else {
-		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_GDPR_LOCATION", gdpr_file_location)
-	}
-
-	gdpr_file_name := "speedtest-cli.json"
-
-	if value, exists := os.LookupEnv("INFRAMONITOR_GDPR_FILENAME"); exists {
-		gdpr_file_name = value
-	} else {
-		log.Printf("Environment variable %s not set, using default value %s", "INFRAMONITOR_GDPR_FILENAME", gdpr_file_name)
-	}
-
 	var tables []struct {
 		Table_name string
 	}
@@ -257,47 +222,19 @@ func main() {
 		log.Printf("Environment variable %s not set, using default value %d", "INFRAMONITOR_SLEEP_TIME_PING", sleepTimeSpeedtest)
 	}
 
+	serverID := ""
+
+	if value, exists := os.LookupEnv("INFRAMONITOR_SPEEDTEST_SERVER_ID"); exists {
+		serverID = value
+	} else {
+		log.Printf("Environment variable %s not set, using closest server instead", "INFRAMONITOR_SPEEDTEST_SERVER_ID")
+	}
+
 	error_channel := make(chan error)
 
 	wg.Add(2)
 
-	bytes, err := json.Marshal(generateGDPR())
-
-	if err != nil {
-		log.Fatalf("Error unmarshalling gdpr compliance: %s", err.Error())
-	}
-
-	err = os.Remove(strings.Join([]string{gdpr_file_location, gdpr_file_name}, "/"))
-
-	if err != nil && !os.IsNotExist(err) {
-		log.Fatalf("Error deleting gdpr compliance file: %s", err.Error())
-	}
-
-	err = os.MkdirAll(gdpr_file_location, os.ModeDir)
-
-	if err != nil {
-		log.Fatalf("Error creating gdpr compliance dir: %s", err.Error())
-	}
-
-	file, err := os.Create(strings.Join([]string{gdpr_file_location, gdpr_file_name}, "/"))
-
-	if err != nil {
-		log.Fatalf("Error creating gdpr compliance file: %s", err.Error())
-	}
-
-	_, err = file.Write(bytes)
-
-	if err != nil {
-		log.Fatalf("Error writing gdpr compliance file: %s", err.Error())
-	}
-
-	err = file.Close()
-
-	if err != nil {
-		log.Fatalf("Error closing gdpr compliance file: %s", err.Error())
-	}
-
-	go speedtestRoutine(db, error_channel, sleepTimeSpeedtest)
+	go speedtestRoutine(db, error_channel, sleepTimeSpeedtest, serverID)
 	go pingRoutine(db, error_channel, sleepTimePing)
 
 	wg.Wait()
@@ -377,25 +314,35 @@ func ping(destination_url string, count string, db *gorm.DB) {
 	log.Printf("Ping for target '%s' complete, result saved", destination_url)
 }
 
-func speedtestRoutine(db *gorm.DB, error_channel chan error, sleepTime int) {
+func speedtestRoutine(db *gorm.DB, error_channel chan error, sleepTime int, serverID string) {
+	var server *speedtest_go.Server
+
+	speedtestClient := speedtest_go.New()
+
+	if len(serverID) > 0 {
+		server, _ = speedtestClient.FetchServerByID(serverID)
+	} else {
+		serverList, _ := speedtest_go.FetchServers()
+		temp, _ := serverList.FindServer([]int{})
+		server = temp[0]
+	}
+
+	if server == nil {
+		panic("Server can not be nil!")
+	}
+
 	for {
 		log.Println("Starting speedtest subroutine")
-		go speedtest(db)
+		go speedtest(db, server)
 		log.Printf("Sleeping after speedtest routine for %d seconds", sleepTime)
 		time.Sleep(time.Duration(sleepTime) * time.Second)
 	}
 }
 
-func speedtest(db *gorm.DB) {
+func speedtest(db *gorm.DB, server *speedtest_go.Server) {
 	log.Println("Starting speedtest command")
 
-	cmd := exec.Command("speedtest", "-f", "json")
-
-	var out bytes.Buffer
-
-	cmd.Stdout = &out
-
-	err := cmd.Run()
+	err := server.TestAll()
 
 	if err != nil {
 		log.Fatalf("Error while running the speedtest command: %s", err.Error())
@@ -403,17 +350,9 @@ func speedtest(db *gorm.DB) {
 
 	log.Println("Speedtest command finished")
 
-	var result SpeedtestResult
-
-	err = json.Unmarshal(out.Bytes(), &result)
-
-	if err != nil {
-		log.Fatalf("Error while unmarshalling: %s", err.Error())
-	}
-
 	log.Println("Starting traceroute command")
 
-	cmd = exec.Command("traceroute", "google.com")
+	cmd := exec.Command("traceroute", "google.com")
 
 	var outTraceRoute bytes.Buffer
 
@@ -431,18 +370,18 @@ func speedtest(db *gorm.DB) {
 
 	err = db.Create(&SpeedtestEntry{
 		Time:                time.Now(),
-		Ping:                result.Latency.Ping,
-		Jitter:              result.Latency.Jitter,
-		Upload:              float64(result.Upload.Bandwidth) * 8 / 1_000_000,
-		Download:            float64(result.Download.Bandwidth) * 8 / 1_000_000,
-		Packet_loss:         result.PacketLoss,
-		Url:                 result.Result.Url,
-		Upload_time_ms:      float64(result.Upload.Elapsed),
-		Download_time_ms:    float64(result.Download.Elapsed),
-		Upload_used_bytes:   float64(result.Upload.Bytes),
-		Download_used_bytes: float64(result.Download.Bytes),
-		Isp:                 result.ISP,
-		Ip_external:         result.Interface.ExternalIp,
+		Ping:                float64(server.Latency.Milliseconds()) / 1000,
+		Jitter:              float64(server.Jitter.Milliseconds()) / 1000,
+		Upload:              float64(server.ULSpeed.Mbps()),
+		Download:            float64(server.DLSpeed.Mbps()),
+		Packet_loss:         server.PacketLoss.Loss(),
+		Url:                 server.URL,
+		Upload_time_ms:      float64(server.TestDuration.Download.Milliseconds()) / 1000,
+		Download_time_ms:    float64(server.TestDuration.Upload.Milliseconds()) / 1000,
+		Upload_used_bytes:   float64(0),
+		Download_used_bytes: float64(0),
+		Isp:                 server.Host,
+		Ip_external:         server.Country,
 		Traceroute:          traceRoute,
 	}).Error
 
