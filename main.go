@@ -280,6 +280,7 @@ func ping(destination_url string, count int, db *gorm.DB) {
 	}
 
 	pinger.Count = count
+	pinger.Timeout = 3 * time.Second
 
 	err = pinger.Run()
 
