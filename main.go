@@ -1,17 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	probing "github.com/prometheus-community/pro-bing"
 	speedtest_go "github.com/showwin/speedtest-go/speedtest"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -266,22 +264,24 @@ func pingRoutine(db *gorm.DB, error_channel chan error, sleepTime int) {
 	for {
 		for _, d := range destinations {
 			log.Printf("Starting ping subroutine for target '%s'", d)
-			go ping(d, fmt.Sprint(count), db)
+			go ping(d, count, db)
 		}
 		time.Sleep(time.Duration(sleepTime) * time.Second)
 	}
 }
 
-func ping(destination_url string, count string, db *gorm.DB) {
+func ping(destination_url string, count int, db *gorm.DB) {
 	log.Printf("Starting ping command for target '%s'", destination_url)
 
-	cmd := exec.Command("jc", "ping", "-c", count, destination_url)
+	pinger, err := probing.NewPinger(destination_url)
 
-	var out bytes.Buffer
+	if err != nil {
+		log.Printf("Error creating pinger for target '%s': %s", destination_url, err.Error())
+	}
 
-	cmd.Stdout = &out
+	pinger.Count = count
 
-	err := cmd.Run()
+	err = pinger.Run()
 
 	if err != nil {
 		log.Printf("Error while pinging target '%s': %s", destination_url, err.Error())
@@ -289,21 +289,15 @@ func ping(destination_url string, count string, db *gorm.DB) {
 
 	log.Printf("Ping command for target '%s' finished", destination_url)
 
-	var result PingResult
-
-	err = json.Unmarshal(out.Bytes(), &result)
-
-	if err != nil {
-		log.Fatalf("Error while unmarshalling: %s", err.Error())
-	}
+	result := pinger.Statistics()
 
 	err = db.Create(&PingEntry{
 		Time:         time.Now(),
-		Rtt_min:      result.RoundTripMsMin,
-		Rtt_max:      result.RoundTripMsMax,
-		Rtt_avg:      result.RoundTripMsAvg,
-		Rtt_mdev:     result.RoundTripMsStddev,
-		Packet_loss:  result.PacketLossPercent,
+		Rtt_min:      float64(result.MinRtt.Milliseconds()),
+		Rtt_max:      float64(result.MaxRtt.Milliseconds()),
+		Rtt_avg:      float64(result.AvgRtt.Milliseconds()),
+		Rtt_mdev:     float64(result.StdDevRtt.Milliseconds()),
+		Packet_loss:  result.PacketLoss,
 		Endpoint_url: destination_url,
 	}).Error
 
@@ -350,23 +344,23 @@ func speedtest(db *gorm.DB, server *speedtest_go.Server) {
 
 	log.Println("Speedtest command finished")
 
-	log.Println("Starting traceroute command")
+	// log.Println("Starting traceroute command")
 
-	cmd := exec.Command("traceroute", "google.com")
+	// cmd := exec.Command("traceroute", "google.com")
 
-	var outTraceRoute bytes.Buffer
+	// var outTraceRoute bytes.Buffer
 
-	cmd.Stdout = &outTraceRoute
+	// cmd.Stdout = &outTraceRoute
 
-	err = cmd.Run()
+	// err = cmd.Run()
 
-	if err != nil {
-		log.Fatalf("Error while running the traceroute command: %s", err.Error())
-	}
+	// if err != nil {
+	// 	log.Fatalf("Error while running the traceroute command: %s", err.Error())
+	// }
 
-	log.Println("Traceroute command finished")
+	// log.Println("Traceroute command finished")
 
-	traceRoute := outTraceRoute.String()
+	// traceRoute := outTraceRoute.String()
 
 	err = db.Create(&SpeedtestEntry{
 		Time:                time.Now(),
@@ -382,7 +376,7 @@ func speedtest(db *gorm.DB, server *speedtest_go.Server) {
 		Download_used_bytes: float64(0),
 		Isp:                 server.Host,
 		Ip_external:         server.Country,
-		Traceroute:          traceRoute,
+		Traceroute:          "",
 	}).Error
 
 	if err != nil {
